@@ -5,12 +5,12 @@
 #define LOG_D(fmt, ...)   printf_P(PSTR(fmt "\n") , ##__VA_ARGS__);
 
 #include <WS2812FX.h>
-#define LED_COUNT 31
+#define LED_COUNT 44
 #define LED_PIN D4
 WS2812FX ws2812fx = WS2812FX(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
 
 bool is_on = false;
-float current_brightness =  50.0;
+int current_brightness =  50.0;
 float current_sat = 0.0;
 float current_hue = 0.0;
 bool fx_on = false;
@@ -18,13 +18,12 @@ float fx_brightness =  50.0;
 float fx_sat = 0.0;
 float fx_hue = 0.0;
 int rgb_colors[3];
-
 void setup() {
 	Serial.begin(115200);
 	wifi_connect(); // in wifi_info.h
 	ws2812fx.init();
-	ws2812fx.setBrightness(50); // Percentage 0-100
-	ws2812fx.setSpeed(200); // 50-5000 - Faster to Slower
+	ws2812fx.setBrightness(100); // 0-255
+	ws2812fx.setSpeed(5000); // 10-5000 - Faster to Slower
 	ws2812fx.setMode(FX_MODE_RAINBOW_CYCLE);
 	ws2812fx.start();
 	rgb_colors[0] = 255;
@@ -92,19 +91,19 @@ void setMode360(float m) {
 
 void set_on(const homekit_value_t v) {
 		bool on = v.bool_value;
+    is_on = on;
 		cha_on.value.bool_value = on; //sync the value
 
 		if(on) {
 			if (!fx_on){
 				ws2812fx.setMode(0);
 			}
-			is_on = true;
-			Serial.println("On");
+      ws2812fx.setBrightness(current_brightness);
+		  Serial.println("On");
 		} else  {
-				is_on = false;
-				Serial.println("Off");
+			Serial.println("Off");
+      ws2812fx.setBrightness(0);  
 		}
-		updateColor();
 }
 
 void set_hue(const homekit_value_t v) {
@@ -126,29 +125,38 @@ void set_sat(const homekit_value_t v) {
 void set_bright(const homekit_value_t v) {
 		Serial.println("set_bright");
 		int bright = v.int_value;
-		cha_bright.value.int_value = bright; //sync the value
+   	cha_bright.value.int_value = bright; //sync the value
 		current_brightness = bright;
-		updateColor();
+    Serial.print("brightness:");
+    Serial.println(current_brightness);
+    current_brightness = map(current_brightness, 0, 100, 0, 255);
+    ws2812fx.setBrightness(current_brightness);
 }
 
 void set_on1(const homekit_value_t v) {
 		bool on = v.bool_value;
 		cha_on1.value.bool_value = on; //sync the value
+    fx_on = on;
 		if(on) {
-				fx_on = true;
-				setMode360(fx_hue);
+      Serial.println("On");				
+      int fx_speed = map(fx_brightness,0,100,5000,50);
+      ws2812fx.setSpeed(fx_speed);
+      setMode360(fx_hue);
 		} else  {
-				fx_on = false;
-				ws2812fx.setMode(0);
+			ws2812fx.setMode(0);
+      ws2812fx.setSpeed(50);
+      Serial.println("Off");
 		}
 		
 }
 
 void set_hue1(const homekit_value_t v) {
-		float hue = v.float_value;
-		cha_hue1.value.float_value = hue; //sync the value
-		fx_hue = hue;
-		setMode360(fx_hue);
+  if (fx_on){
+    float hue = v.float_value;
+    cha_hue1.value.float_value = hue; //sync the value
+    fx_hue = hue;
+    setMode360(fx_hue);
+  }
 }
 
 void set_sat1(const homekit_value_t v) {
@@ -161,8 +169,16 @@ void set_bright1(const homekit_value_t v) {
 		int bright = v.int_value;
 		cha_bright1.value.int_value = bright; //sync the value
 		fx_brightness = bright;
+    Serial.print("fx brightness:");
+    Serial.println(fx_brightness);
 		int fx_speed = map(fx_brightness,0,100,5000,50);
-		ws2812fx.setSpeed(fx_speed);
+    if (fx_brightness>0){
+      ws2812fx.setSpeed(fx_speed);
+    } else {
+      Serial.print("fx speed is 50");
+      ws2812fx.setSpeed(50);
+    }
+		
 //    if (fx_brightness > 50) {
 //        uint8_t fx_speed = fx_brightness - 50;
 //        ws2812fx.setSpeed(fx_speed*5.1);
@@ -176,16 +192,38 @@ void set_bright1(const homekit_value_t v) {
 void updateColor()
 {
 	if (is_on) {
-			HSV2RGB(current_hue, current_sat, current_brightness);
-			int b = map(current_brightness,0, 100,0, 255);
-			ws2812fx.setBrightness(b);
-			ws2812fx.setColor(rgb_colors[0],rgb_colors[1],rgb_colors[2]); 
+			HSV2RGB(current_hue, current_sat, 100);
+			ws2812fx.setColor(rgb_colors[0],rgb_colors[1],rgb_colors[2]);
 	} else if(!is_on) //lamp - switch to off
 	{
 			ws2812fx.setBrightness(0);
 	}
 }
+void HSI2RGB(float hue, float saturation, float intensity) {
+  hue = constrain(hue, 0, 360);              // constrain hue to 0-360
+  hue = hue * PI / 180;                      // Convert to radians.
+  saturation = constrain(saturation / 100, 0, 1); // constrain to 0-1
+  intensity = constrain(intensity / 100, 0, 1);   // constrain to 0-1
 
+  // if hue is in the red/green sector:
+  if (hue < 2 * PI / 3) {
+    rgb_colors[0] =255 * intensity / 3 * (1 + saturation * cos(hue) / cos((PI / 3) - hue));
+    rgb_colors[1] =255 * intensity / 3 * (1 + saturation * (1 - cos(hue) / cos((PI / 3) - hue)));
+    rgb_colors[2] =255 * intensity / 3 * (1 - saturation);
+    // if hue is in the green/blue sector:
+  } else if (hue < 4 * PI / 3) {
+    hue = hue - (2 * PI / 3);
+    rgb_colors[1] =255 * intensity / 3 * (1 + saturation * cos(hue) / cos((PI / 3) - hue));
+    rgb_colors[2] =255 * intensity / 3 * (1 + saturation * (1 - cos(hue) / cos((PI / 3) - hue)));
+    rgb_colors[0] =255 * intensity / 3 * (1 - saturation);
+    // if hue is in the red/blue sector:
+  } else {
+    hue = hue - (4 * PI / 3);
+    rgb_colors[2] =255 * intensity / 3 * (1 + saturation * cos(hue) / cos((PI / 3) - hue));
+    rgb_colors[0] =255 * intensity / 3 * (1 + saturation * (1 - cos(hue) / cos((PI / 3) - hue)));
+    rgb_colors[1] =255 * intensity / 3 * (1 - saturation);
+  }
+}
 void HSV2RGB(float h,float s,float v) {
 
 	int i;
